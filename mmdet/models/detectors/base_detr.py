@@ -87,7 +87,7 @@ class DetectionTransformer(BaseDetector, metaclass=ABCMeta):
         pass
 
     def loss(self, batch_inputs: Tensor,
-             batch_data_samples: SampleList) -> Union[dict, list]:
+            batch_data_samples: SampleList) -> Union[dict, list]:
         """Calculate losses from a batch of inputs and data samples.
 
         Args:
@@ -101,12 +101,14 @@ class DetectionTransformer(BaseDetector, metaclass=ABCMeta):
             dict: A dictionary of loss components
         """
         img_feats = self.extract_feat(batch_inputs)
-        head_inputs_dict = self.forward_transformer(img_feats,
-                                                    batch_data_samples)
-        losses = self.bbox_head.loss(
-            **head_inputs_dict, batch_data_samples=batch_data_samples)
+        outputs = self.forward_transformer(img_feats, batch_data_samples)
 
-        return losses
+        # 如果 forward_transformer 已经返回 losses（如 DINOv2），直接返回
+        if isinstance(outputs, dict) and any(k.startswith("loss") for k in outputs):
+            return outputs
+        # 否则，将其视作 head_inputs_dict，再传入 bbox_head.loss
+        return self.bbox_head.loss(**outputs, batch_data_samples=batch_data_samples)
+
 
     def predict(self,
                 batch_inputs: Tensor,
@@ -222,12 +224,17 @@ class DetectionTransformer(BaseDetector, metaclass=ABCMeta):
             plt.savefig(os.path.join(save_folder, f"{imagename}_all.png"), bbox_inches='tight', pad_inches=0)
             plt.close()
 
-        head_inputs_dict = self.forward_transformer(img_feats,
-                                                    batch_data_samples)
+        head_inputs_dict = self.forward_transformer(img_feats, batch_data_samples)
+
+        # 过滤只用于训练的 key
+        for key in ['sem_align', 'decoder_hidden']:
+            head_inputs_dict.pop(key, None)
+
         results_list = self.bbox_head.predict(
             **head_inputs_dict,
             rescale=rescale,
             batch_data_samples=batch_data_samples)
+
         batch_data_samples = self.add_pred_to_datasample(
             batch_data_samples, results_list)
         return batch_data_samples
